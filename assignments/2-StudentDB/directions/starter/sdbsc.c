@@ -21,22 +21,24 @@
  *            M_ERR_DB_OPEN on error
  *             
  */
-int open_db(char *dbFile, bool should_truncate){
+int open_db(char *dbFile, bool should_truncate)
+{
     // Set permissions: rw-rw----
     // see sys/stat.h for constants
     mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 
-    //open the file if it exists for Read and Write, 
-    //create it if it does not exist
-    int    flags = O_RDWR | O_CREAT;
+    // open the file if it exists for Read and Write,
+    // create it if it does not exist
+    int flags = O_RDWR | O_CREAT;
 
-    if (should_truncate) 
+    if (should_truncate)
         flags += O_TRUNC;
 
     // Now open file
     int fd = open(dbFile, flags, mode);
 
-    if (fd == -1) {
+    if (fd == -1)
+    {
         // Handle the error
         printf(M_ERR_DB_OPEN);
         return ERR_DB_FILE;
@@ -59,7 +61,17 @@ int open_db(char *dbFile, bool should_truncate){
  *  console:  Does not produce any console I/O used by other functions
  */
 int get_student(int fd, int id, student_t *s){
-    return NOT_IMPLEMENTED_YET;
+    if (lseek(fd, id * sizeof(student_t), SEEK_SET) == -1) {
+        printf(M_ERR_DB_READ);
+        return ERR_DB_FILE;
+    }
+    if (read(fd, s, sizeof(student_t)) != sizeof(student_t)) {
+        return SRCH_NOT_FOUND;
+    }
+    if (s->id == 0) {
+        return SRCH_NOT_FOUND;
+    }
+    return NO_ERROR;
 }
 
 /*
@@ -87,9 +99,23 @@ int get_student(int fd, int id, student_t *s){
  *            M_ERR_DB_WRITE    error writing to db file (adding student)
  *            
  */
-int add_student(int fd, int id, char *fname, char *lname, int gpa){
-    printf(M_NOT_IMPL);
-    return NOT_IMPLEMENTED_YET;
+int add_student(int fd, int id, char *fname, char *lname, int gpa) {
+    student_t s;
+    if (get_student(fd, id, &s) == NO_ERROR) {
+        printf(M_ERR_DB_ADD_DUP, id);
+        return ERR_DB_OP;
+    }
+    memset(&s, 0, sizeof(student_t));
+    s.id = id;
+    strncpy(s.fname, fname, sizeof(s.fname) - 1);
+    strncpy(s.lname, lname, sizeof(s.lname) - 1);
+    s.gpa = gpa;
+    if (lseek(fd, id * sizeof(student_t), SEEK_SET) == -1 || write(fd, &s, sizeof(student_t)) != sizeof(student_t)) {
+        printf(M_ERR_DB_WRITE);
+        return ERR_DB_FILE;
+    }
+    printf(M_STD_ADDED, id);
+    return NO_ERROR;
 }
 
 /*
@@ -114,9 +140,19 @@ int add_student(int fd, int id, char *fname, char *lname, int gpa){
  *            M_ERR_DB_WRITE     error writing to db file (adding student)
  *            
  */
-int del_student(int fd, int id){
-    printf(M_NOT_IMPL);
-    return NOT_IMPLEMENTED_YET;
+int del_student(int fd, int id) {
+    student_t s;
+    if (get_student(fd, id, &s) != NO_ERROR) {
+        printf(M_STD_NOT_FND_MSG, id);
+        return ERR_DB_OP;
+    }
+    memset(&s, 0, sizeof(student_t));
+    if (lseek(fd, id * sizeof(student_t), SEEK_SET) == -1 || write(fd, &s, sizeof(student_t)) != sizeof(student_t)) {
+        printf(M_ERR_DB_WRITE);
+        return ERR_DB_FILE;
+    }
+    printf(M_STD_DEL_MSG, id);
+    return NO_ERROR;
 }
 
 /*
@@ -143,9 +179,21 @@ int del_student(int fd, int id){
  *            M_ERR_DB_WRITE   error writing to db file (adding student)
  *            
  */
-int count_db_records(int fd){
-    printf(M_NOT_IMPL);
-    return NOT_IMPLEMENTED_YET;
+int count_db_records(int fd) {
+    student_t s;
+    int count = 0;
+    lseek(fd, 0, SEEK_SET);
+    while (read(fd, &s, sizeof(student_t)) == sizeof(student_t)) {
+        if (s.id != 0) {
+            count++;
+        }
+    }
+    if (count == 0) {
+        printf(M_DB_EMPTY);
+    } else {
+        printf(M_DB_RECORD_CNT, count);
+    }
+    return count;
 }
 
 /*
@@ -181,9 +229,25 @@ int count_db_records(int fd){
  *            M_ERR_DB_READ    error reading or seeking the database file
  *            
  */
-int print_db(int fd){
-    printf(M_NOT_IMPL);
-    return NOT_IMPLEMENTED_YET;
+int print_db(int fd) {
+    student_t s;
+    bool header_printed = false;
+    int is_empty = 1;
+    lseek(fd, 0, SEEK_SET);
+    while (read(fd, &s, sizeof(student_t)) == sizeof(student_t)) {
+        if (s.id != 0) {
+            if (!header_printed) {
+                printf(STUDENT_PRINT_HDR_STRING, "ID", "FIRST_NAME", "LAST_NAME", "GPA");
+                header_printed = true;
+            }
+            printf(STUDENT_PRINT_FMT_STRING, s.id, s.fname, s.lname, s.gpa / 100.0);
+            is_empty = 0;
+        } 
+    } 
+    if (is_empty) { // if database's empty
+        printf(M_DB_EMPTY);
+    }
+    return NO_ERROR;
 }
 
 /*
@@ -215,7 +279,15 @@ int print_db(int fd){
  *            
  */
 void print_student(student_t *s){
-    printf(M_NOT_IMPL);
+    if (s == NULL || s->id == 0) {
+        printf(M_ERR_STD_PRINT);
+        return;
+    }
+
+    printf(STUDENT_PRINT_HDR_STRING, "ID", "FIRST NAME", "LAST NAME", "GPA");
+    
+    float gpa = s->gpa / 100.0;
+    printf(STUDENT_PRINT_FMT_STRING, s->id, s->fname, s->lname, gpa);
 }
 
 /*
